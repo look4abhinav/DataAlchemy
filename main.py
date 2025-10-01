@@ -80,9 +80,7 @@ def get_document_context(llm, doc_text: str) -> str:
 
 
 def get_important_features(llm, doc_context: str) -> list[str]:
-    console.log(
-        '[bold blue]Identifying important features from document context...[/bold blue]'
-    )
+    console.log('[bold blue]Identifying important features from document context...[/bold blue]')
     prompt = f"""
         You are an expert in document analysis and feature extraction. Your task is to identify the most important 
         features to extract from a document based on its context. Focus on understanding the document's type, purpose, 
@@ -129,12 +127,8 @@ def get_important_features(llm, doc_context: str) -> list[str]:
     return [line.strip('- ') for line in response.content.splitlines() if line.strip()]
 
 
-def extract_features_from_text(
-    llm, doc_text: str, features: list[str]
-) -> dict[str, str]:
-    console.log(
-        '[bold blue]Extracting specified features from document text...[/bold blue]'
-    )
+def extract_features_from_text(llm, doc_text: str, features: list[str]) -> dict[str, str]:
+    console.log('[bold blue]Extracting specified features from document text...[/bold blue]')
     feature_dict = {}
     for feature in features:
         prompt = f"""
@@ -183,9 +177,7 @@ def main():
     load_dotenv()
     pplx_api_key = os.getenv('PPLX_API_KEY')
     if not pplx_api_key:
-        console.log(
-            '[bold red]Error: PPLX_API_KEY environment variable not set.[/bold red]'
-        )
+        console.log('[bold red]Error: PPLX_API_KEY environment variable not set.[/bold red]')
         raise ValueError('PPLX_API_KEY environment variable not set.')
     console.log('[bold green]Environment variables loaded successfully.[/bold green]')
 
@@ -203,32 +195,26 @@ def main():
     pdf_texts = read_pdfs_with_llm(llm, source_directory)
 
     # Step 4: Process each document to extract context and features
-    console.log(
-        '[bold blue]Processing documents to extract context and features...[/bold blue]'
-    )
+    console.log('[bold blue]Processing documents to extract context and features...[/bold blue]')
     doc_contexts = {}
     doc_features = {}
     all_features = set()
 
     with Progress() as progress:
-        task = progress.add_task(
-            '[bold blue]Processing documents...', total=len(pdf_texts)
-        )
+        task = progress.add_task('[bold blue]Processing documents...', total=len(pdf_texts))
 
         for feature_name, text in pdf_texts.items():
             # Step 1: Extract document context
-            progress.console.log(
-                '[bold blue]Step 1: Extracting document context...[/bold blue]'
-            )
+            progress.console.log('[bold blue]Step 1: Extracting document context...[/bold blue]')
             doc_contexts[feature_name] = get_document_context(llm, text)
+            progress.console.clear()
 
             # Step 2: Extract important features based on context
-            progress.console.log(
-                '[bold blue]Step 2: Extracting important features based on context...[/bold blue]'
-            )
+            progress.console.log('[bold blue]Step 2: Extracting important features based on context...[/bold blue]')
             features = get_important_features(llm, text)
             doc_features[feature_name] = features
             all_features.update(features)
+            progress.console.clear()
 
             progress.advance(task)
 
@@ -238,21 +224,13 @@ def main():
     # all_features = combine_similar_features(llm, all_features)
 
     # Step 5: Extract feature values and build a DataFrame
-    console.log(
-        '[bold blue]Extracting feature values and building a DataFrame...[/bold blue]'
-    )
+    console.log('[bold blue]Extracting feature values and building a DataFrame...[/bold blue]')
     rows = []
     with Progress() as progress:
-        task = progress.add_task(
-            '[bold blue]Extracting features...', total=len(pdf_texts)
-        )
+        task = progress.add_task('[bold blue]Extracting features...', total=len(pdf_texts))
         for feature_name, text in pdf_texts.items():
-            feature_values = extract_features_from_text(
-                llm, text, doc_features[feature_name]
-            )
-            row = {
-                feature: feature_values.get(feature, 'N/A') for feature in all_features
-            }
+            feature_values = extract_features_from_text(llm, text, doc_features[feature_name])
+            row = {feature: feature_values.get(feature, 'N/A') for feature in all_features}
             row['filename'] = feature_name
             rows.append(row)
             progress.advance(task)
@@ -264,9 +242,7 @@ def main():
     # Step 6: Save results to a CSV file
     output_file = 'extracted_features.csv'
     df.to_csv(output_file, index=False)
-    console.log(
-        f'[bold green]Feature extraction complete. Results saved to {output_file}[/bold green]'
-    )
+    console.log(f'[bold green]Feature extraction complete. Results saved to {output_file}[/bold green]')
 
 
 if __name__ == '__main__':
