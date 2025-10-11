@@ -1,3 +1,4 @@
+import ast
 import os
 
 import pandas as pd
@@ -7,25 +8,24 @@ from langchain_perplexity import ChatPerplexity
 from PyPDF2 import PdfReader
 from rich.console import Console
 from rich.progress import Progress
-import ast
 
 console = Console()
 
 
 # Step 1: Read all PDF files from the source directory using LLMs
 def read_pdfs_with_llm(llm, directory: str) -> dict[str, str]:
-    console.log(f'[bold blue]Reading PDF files from directory: {directory}[/bold blue]')
+    console.log(f"[bold blue]Reading PDF files from directory: {directory}[/bold blue]")
     pdf_texts = {}
     with Progress() as progress:
         task = progress.add_task(
-            '[bold blue]Reading PDF files...[/bold blue]',
+            "[bold blue]Reading PDF files...[/bold blue]",
             total=len(os.listdir(directory)),
         )
         for filename in os.listdir(directory):
-            if filename.lower().endswith('.pdf'):
+            if filename.lower().endswith(".pdf"):
                 path = os.path.join(directory, filename)
                 reader = PdfReader(path)
-                pdf_content = ''
+                pdf_content = ""
                 for page in reader.pages:
                     pdf_content += page.extract_text()
                 prompt = f"""
@@ -48,12 +48,12 @@ def read_pdfs_with_llm(llm, directory: str) -> dict[str, str]:
                 response = llm.invoke([HumanMessage(content=prompt)])
                 pdf_texts[filename] = response.content.strip()
             progress.advance(task)
-    console.log('[bold blue]Finished reading PDF files.[/bold blue]')
+    console.log("[bold blue]Finished reading PDF files.[/bold blue]")
     return pdf_texts
 
 
 def get_document_context(llm, doc_text: str) -> str:
-    console.log('[bold blue]Extracting document context...[/bold blue]')
+    console.log("[bold blue]Extracting document context...[/bold blue]")
     prompt = f"""
         You are an expert in analyzing and summarizing documents. Your task is to summarize the main context, purpose, 
         and type of the following document. Additionally, identify the kind of details the document is related to 
@@ -81,7 +81,7 @@ def get_document_context(llm, doc_text: str) -> str:
 
 
 def get_important_features(llm, doc_context: str) -> list[str]:
-    console.log('[bold blue]Identifying important features from document context...[/bold blue]')
+    console.log("[bold blue]Identifying important features from document context...[/bold blue]")
     prompt = f"""
         You are an expert in document analysis and feature extraction. Your task is to identify the most important 
         features to extract from a document based on its context. Focus on understanding the document's type, purpose, 
@@ -125,20 +125,20 @@ def get_important_features(llm, doc_context: str) -> list[str]:
             return [str(f) for f in features]
     except Exception:
         pass
-    return [line.strip('- ') for line in response.content.splitlines() if line.strip()]
+    return [line.strip("- ") for line in response.content.splitlines() if line.strip()]
 
 
 def combine_similar_features(llm, features: set[str]) -> list[str]:
-        """Use the LLM to merge similar feature names into canonical feature names.
-        Returns a sorted list of canonical feature names.
-        """
-        console.log('[bold blue]Combining similar features using the LLM...[/bold blue]')
-        if not features:
-            return []
+    """Use the LLM to merge similar feature names into canonical feature names.
+    Returns a sorted list of canonical feature names.
+    """
+    console.log("[bold blue]Combining similar features using the LLM...[/bold blue]")
+    if not features:
+        return []
 
-        # Prepare a prompt asking the LLM to group/merge similar feature names and
-        # return a Python list of canonical feature names (only the list).
-        prompt = f"""
+    # Prepare a prompt asking the LLM to group/merge similar feature names and
+    # return a Python list of canonical feature names (only the list).
+    prompt = f"""
         You are an expert at normalizing and deduplicating feature names. Given the following list of feature
         names extracted from many documents, group synonyms and very similar items under a single canonical
         feature name. Return ONLY a Python list of the canonical feature names (strings). Do not include any
@@ -148,29 +148,30 @@ def combine_similar_features(llm, features: set[str]) -> list[str]:
         {sorted(list(features))}
         """
 
-        response = llm.invoke([HumanMessage(content=prompt)])
-        # Try to safely parse the LLM output as a Python literal
-        try:
-            parsed = ast.literal_eval(response.content.strip())
-            if isinstance(parsed, list):
-                return sorted(str(x) for x in parsed)
-        except Exception:
-            pass
+    response = llm.invoke([HumanMessage(content=prompt)])
+    # Try to safely parse the LLM output as a Python literal
+    try:
+        parsed = ast.literal_eval(response.content.strip())
+        if isinstance(parsed, list):
+            return sorted(str(x) for x in parsed)
+    except Exception:
+        pass
 
-        # Fallback: simple heuristic normalization if LLM output cannot be parsed
-        console.log('[bold yellow]LLM output could not be parsed. Falling back to simple normalization.[/bold yellow]')
-        normalized_map = {}
-        for f in features:
-            key = ''.join(ch.lower() if ch.isalnum() or ch.isspace() else ' ' for ch in f).strip()
-            key = ' '.join(key.split())  # collapse whitespace
-            # use title-case of key as a canonical readable form
-            canonical = key.title() if key else f
-            normalized_map[canonical] = normalized_map.get(canonical, []) + [f]
+    # Fallback: simple heuristic normalization if LLM output cannot be parsed
+    console.log("[bold yellow]LLM output could not be parsed. Falling back to simple normalization.[/bold yellow]")
+    normalized_map = {}
+    for f in features:
+        key = "".join(ch.lower() if ch.isalnum() or ch.isspace() else " " for ch in f).strip()
+        key = " ".join(key.split())  # collapse whitespace
+        # use title-case of key as a canonical readable form
+        canonical = key.title() if key else f
+        normalized_map[canonical] = normalized_map.get(canonical, []) + [f]
 
-        return sorted(normalized_map.keys())
+    return sorted(normalized_map.keys())
+
 
 def extract_features_from_text(llm, doc_text: str, features: list[str]) -> dict[str, str]:
-    console.log('[bold blue]Extracting specified features from document text...[/bold blue]')
+    console.log("[bold blue]Extracting specified features from document text...[/bold blue]")
     feature_dict = {}
     for feature in features:
         prompt = f"""
@@ -203,10 +204,10 @@ def extract_features_from_text(llm, doc_text: str, features: list[str]) -> dict[
             if isinstance(extracted_data, dict) and feature in extracted_data:
                 feature_dict[feature] = extracted_data[feature]
             else:
-                feature_dict[feature] = 'N/A'
+                feature_dict[feature] = "N/A"
         except Exception:
-            feature_dict[feature] = 'N/A'
-    console.log('[bold green]Feature extraction completed successfully.[/bold green]')
+            feature_dict[feature] = "N/A"
+    console.log("[bold green]Feature extraction completed successfully.[/bold green]")
     return feature_dict
 
 
@@ -215,44 +216,44 @@ def main():
     """Main pipeline for processing PDFs and extracting features."""
 
     # Step 1: Load environment variables
-    console.log('[bold blue]Loading environment variables...[/bold blue]')
+    console.log("[bold blue]Loading environment variables...[/bold blue]")
     load_dotenv()
-    pplx_api_key = os.getenv('PPLX_API_KEY')
+    pplx_api_key = os.getenv("PPLX_API_KEY")
     if not pplx_api_key:
-        console.log('[bold red]Error: PPLX_API_KEY environment variable not set.[/bold red]')
-        raise ValueError('PPLX_API_KEY environment variable not set.')
-    console.log('[bold green]Environment variables loaded successfully.[/bold green]')
+        console.log("[bold red]Error: PPLX_API_KEY environment variable not set.[/bold red]")
+        raise ValueError("PPLX_API_KEY environment variable not set.")
+    console.log("[bold green]Environment variables loaded successfully.[/bold green]")
 
     # Step 2: Initialize the LLM
-    console.log('[bold blue]Initializing the LLM...[/bold blue]')
+    console.log("[bold blue]Initializing the LLM...[/bold blue]")
     llm = ChatPerplexity(
-        model='sonar-pro',  # Replace with your desired Perplexity model.
+        model="sonar-pro",  # Replace with your desired Perplexity model.
         temperature=0.3,  # Optional: Adjust the temperature for creativity
         timeout=60,  # Set a timeout in seconds (adjust as needed)
     )
-    console.log('[bold green]LLM initialized successfully.[/bold green]')
+    console.log("[bold green]LLM initialized successfully.[/bold green]")
 
     # Step 3: Read PDFs from the source directory
-    source_directory = 'documents'  # Update with your directory path
+    source_directory = "documents"  # Update with your directory path
     pdf_texts = read_pdfs_with_llm(llm, source_directory)
 
     # Step 4: Process each document to extract context and features
-    console.log('[bold blue]Processing documents to extract context and features...[/bold blue]')
+    console.log("[bold blue]Processing documents to extract context and features...[/bold blue]")
     doc_contexts = {}
     doc_features = {}
     all_features = set()
 
     with Progress() as progress:
-        task = progress.add_task('[bold blue]Processing documents...', total=len(pdf_texts))
+        task = progress.add_task("[bold blue]Processing documents...", total=len(pdf_texts))
 
         for feature_name, text in pdf_texts.items():
             # Step 1: Extract document context
-            progress.console.log('[bold blue]Step 1: Extracting document context...[/bold blue]')
+            progress.console.log("[bold blue]Step 1: Extracting document context...[/bold blue]")
             doc_contexts[feature_name] = get_document_context(llm, text)
             progress.console.clear()
 
             # Step 2: Extract important features based on context
-            progress.console.log('[bold blue]Step 2: Extracting important features based on context...[/bold blue]')
+            progress.console.log("[bold blue]Step 2: Extracting important features based on context...[/bold blue]")
             features = get_important_features(llm, text)
             doc_features[feature_name] = features
             all_features.update(features)
@@ -266,26 +267,28 @@ def main():
     all_features = combine_similar_features(llm, all_features)
 
     # Step 5: Extract feature values and build a DataFrame
-    console.log('[bold blue]Extracting feature values and building a DataFrame...[/bold blue]')
+    console.log("[bold blue]Extracting feature values and building a DataFrame...[/bold blue]")
     rows = []
     with Progress() as progress:
-        task = progress.add_task('[bold blue]Extracting features...', total=len(pdf_texts))
+        task = progress.add_task("[bold blue]Extracting features...", total=len(pdf_texts))
         for feature_name, text in pdf_texts.items():
             feature_values = extract_features_from_text(llm, text, doc_features[feature_name])
-            row = {feature: feature_values.get(feature, 'N/A') for feature in all_features}
-            row['filename'] = feature_name
+            row = {feature: feature_values.get(feature, "N/A") for feature in all_features}
+            row["filename"] = feature_name
             rows.append(row)
             progress.advance(task)
 
     df = pd.DataFrame(rows)
     # Remove columns that are completely empty
-    df = df.dropna(axis=1, how='all')
+    df = df.dropna(axis="columns", how="all")
 
     # Step 6: Save results to a CSV file
-    output_file = 'extracted_features.csv'
-    df.to_csv(output_file, index=False)
-    console.log(f'[bold green]Feature extraction complete. Results saved to {output_file}[/bold green]')
+    output_file = "extracted_features.csv"
+    output_path = os.path.join("artifacts", output_file)
+
+    df.to_csv(output_path, index=False)
+    console.log(f"[bold green]Feature extraction complete. Results saved to {output_file}[/bold green]")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
