@@ -7,6 +7,7 @@ from langchain_perplexity import ChatPerplexity
 from PyPDF2 import PdfReader
 from rich.console import Console
 from rich.progress import Progress
+import ast
 
 console = Console()
 
@@ -127,6 +128,47 @@ def get_important_features(llm, doc_context: str) -> list[str]:
     return [line.strip('- ') for line in response.content.splitlines() if line.strip()]
 
 
+def combine_similar_features(llm, features: set[str]) -> list[str]:
+        """Use the LLM to merge similar feature names into canonical feature names.
+        Returns a sorted list of canonical feature names.
+        """
+        console.log('[bold blue]Combining similar features using the LLM...[/bold blue]')
+        if not features:
+            return []
+
+        # Prepare a prompt asking the LLM to group/merge similar feature names and
+        # return a Python list of canonical feature names (only the list).
+        prompt = f"""
+        You are an expert at normalizing and deduplicating feature names. Given the following list of feature
+        names extracted from many documents, group synonyms and very similar items under a single canonical
+        feature name. Return ONLY a Python list of the canonical feature names (strings). Do not include any
+        explanation or extra text.
+
+        Input features:
+        {sorted(list(features))}
+        """
+
+        response = llm.invoke([HumanMessage(content=prompt)])
+        # Try to safely parse the LLM output as a Python literal
+        try:
+            parsed = ast.literal_eval(response.content.strip())
+            if isinstance(parsed, list):
+                return sorted(str(x) for x in parsed)
+        except Exception:
+            pass
+
+        # Fallback: simple heuristic normalization if LLM output cannot be parsed
+        console.log('[bold yellow]LLM output could not be parsed. Falling back to simple normalization.[/bold yellow]')
+        normalized_map = {}
+        for f in features:
+            key = ''.join(ch.lower() if ch.isalnum() or ch.isspace() else ' ' for ch in f).strip()
+            key = ' '.join(key.split())  # collapse whitespace
+            # use title-case of key as a canonical readable form
+            canonical = key.title() if key else f
+            normalized_map[canonical] = normalized_map.get(canonical, []) + [f]
+
+        return sorted(normalized_map.keys())
+
 def extract_features_from_text(llm, doc_text: str, features: list[str]) -> dict[str, str]:
     console.log('[bold blue]Extracting specified features from document text...[/bold blue]')
     feature_dict = {}
@@ -184,8 +226,8 @@ def main():
     # Step 2: Initialize the LLM
     console.log('[bold blue]Initializing the LLM...[/bold blue]')
     llm = ChatPerplexity(
-        model='sonar',  # Replace with your desired Perplexity model.
-        temperature=0.9,  # Optional: Adjust the temperature for creativity
+        model='sonar-pro',  # Replace with your desired Perplexity model.
+        temperature=0.3,  # Optional: Adjust the temperature for creativity
         timeout=60,  # Set a timeout in seconds (adjust as needed)
     )
     console.log('[bold green]LLM initialized successfully.[/bold green]')
@@ -221,7 +263,7 @@ def main():
     # Convert all_features to a sorted list for consistent ordering
 
     # Step _: Combine similar features
-    # all_features = combine_similar_features(llm, all_features)
+    all_features = combine_similar_features(llm, all_features)
 
     # Step 5: Extract feature values and build a DataFrame
     console.log('[bold blue]Extracting feature values and building a DataFrame...[/bold blue]')
