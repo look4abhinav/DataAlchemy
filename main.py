@@ -1,294 +1,102 @@
-import ast
+import io
+import json
 import os
+from pathlib import Path
 
 import pandas as pd
 from dotenv import load_dotenv
-from langchain_core.messages import HumanMessage
-from langchain_perplexity import ChatPerplexity
-from PyPDF2 import PdfReader
+from pdf2image import convert_from_path
+from pydantic_ai import Agent, BinaryContent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai import OpenAIProvider
 from rich.console import Console
-from rich.progress import Progress
 
-console = Console()
-
-
-# Step 1: Read all PDF files from the source directory using LLMs
-def read_pdfs_with_llm(llm, directory: str) -> dict[str, str]:
-    console.log(f"[bold blue]Reading PDF files from directory: {directory}[/bold blue]")
-    pdf_texts = {}
-    with Progress() as progress:
-        task = progress.add_task(
-            "[bold blue]Reading PDF files...[/bold blue]",
-            total=len(os.listdir(directory)),
-        )
-        for filename in os.listdir(directory):
-            if filename.lower().endswith(".pdf"):
-                path = os.path.join(directory, filename)
-                reader = PdfReader(path)
-                pdf_content = ""
-                for page in reader.pages:
-                    pdf_content += page.extract_text()
-                prompt = f"""
-                    You are an expert in extracting information from PDF files. Your task is to extract the text content 
-                    from the following PDF file. Additionally, if the PDF contains any images, provide a brief description 
-                    of each image. If there are no images, do not include an image description in your response. 
-                    Ensure that you only share the extracted text and image descriptions, and nothing else.
-
-                    Example 1:
-                    Text: 'This is an example text from the PDF document.'
-                    Image Description: 'An image of a bar chart showing sales data over time.'
-
-                    Example 2:
-                    Text: 'Another example text from a different PDF document.'
-
-                    Now, process the following PDF content:
-
-                    {pdf_content}
-                """
-                response = llm.invoke([HumanMessage(content=prompt)])
-                pdf_texts[filename] = response.content.strip()
-            progress.advance(task)
-    console.log("[bold blue]Finished reading PDF files.[/bold blue]")
-    return pdf_texts
+import prompts.model_prompts as mp
 
 
-def get_document_context(llm, doc_text: str) -> str:
-    console.log("[bold blue]Extracting document context...[/bold blue]")
-    prompt = f"""
-        You are an expert in analyzing and summarizing documents. Your task is to summarize the main context, purpose, 
-        and type of the following document. Additionally, identify the kind of details the document is related to 
-        (e.g., financial report, legal document, research paper, etc.). Ensure that your response is concise and 
-        provides only the extracted features as a summary.
+def setup_agent() -> Agent:
+    """Sets up the model to be used and returns a Pydantic Agent
 
-        Example 1:
-        Context: 'This document is a financial report summarizing the quarterly performance of a company, including 
-        revenue, expenses, and profit margins.'
-        Type: 'Financial Report'
-        Details: 'Revenue, Expenses, Profit Margins'
-
-        Example 2:
-        Context: 'This document is a research paper discussing the effects of climate change on marine biodiversity, 
-        including case studies and statistical analysis.'
-        Type: 'Research Paper'
-        Details: 'Climate Change, Marine Biodiversity, Case Studies, Statistical Analysis'
-
-        Now, analyze and summarize the following document:
-
-        {doc_text}
+    Returns:
+        Agent: Pydantic Agent
     """
-    response = llm.invoke([HumanMessage(content=prompt)])
-    return response.content.strip()
 
-
-def get_important_features(llm, doc_context: str) -> list[str]:
-    console.log("[bold blue]Identifying important features from document context...[/bold blue]")
-    prompt = f"""
-        You are an expert in document analysis and feature extraction. Your task is to identify the most important 
-        features to extract from a document based on its context. Focus on understanding the document's type, purpose, 
-        and the kind of details it contains. Ensure that your response is concise and provides only the extracted 
-        features as a Python list of strings. Do not include any additional text or explanations.
-
-        Example 1:
-        Context: 'This document is a financial report summarizing the quarterly performance of a company, including 
-        revenue, expenses, and profit margins.'
-        Suggested Features: ['Revenue', 'Expenses', 'Profit Margins']
-
-        Example 2:
-        Context: 'This document is a research paper discussing the effects of climate change on marine biodiversity, 
-        including case studies and statistical analysis.'
-        Suggested Features: ['Climate Change', 'Marine Biodiversity', 'Case Studies', 'Statistical Analysis']
-
-        Example 3:
-        Context: 'This document is a legal contract outlining the terms and conditions of a business agreement, 
-        including parties involved, obligations, and penalties.'
-        Suggested Features: ['Parties Involved', 'Obligations', 'Penalties']
-
-        Example 4:
-        Context: 'This document is a user manual for a software application, providing instructions on installation, 
-        usage, and troubleshooting.'
-        Suggested Features: ['Installation Instructions', 'Usage Guidelines', 'Troubleshooting Steps']
-
-        Example 5:
-        Context: 'This document is a medical report detailing the diagnosis, treatment plan, and follow-up schedule 
-        for a patient.'
-        Suggested Features: ['Diagnosis', 'Treatment Plan', 'Follow-Up Schedule']
-
-        Now, based on the following document context, suggest the most important features to extract as a Python list 
-        of strings:
-
-        Context: {doc_context}
-    """
-    response = llm.invoke([HumanMessage(content=prompt)])
-    try:
-        features = eval(response.content)
-        if isinstance(features, list):
-            return [str(f) for f in features]
-    except Exception:
-        pass
-    return [line.strip("- ") for line in response.content.splitlines() if line.strip()]
-
-
-def combine_similar_features(llm, features: set[str]) -> list[str]:
-    """Use the LLM to merge similar feature names into canonical feature names.
-    Returns a sorted list of canonical feature names.
-    """
-    console.log("[bold blue]Combining similar features using the LLM...[/bold blue]")
-    if not features:
-        return []
-
-    # Prepare a prompt asking the LLM to group/merge similar feature names and
-    # return a Python list of canonical feature names (only the list).
-    prompt = f"""
-        You are an expert at normalizing and deduplicating feature names. Given the following list of feature
-        names extracted from many documents, group synonyms and very similar items under a single canonical
-        feature name. Return ONLY a Python list of the canonical feature names (strings). Do not include any
-        explanation or extra text.
-
-        Input features:
-        {sorted(list(features))}
-        """
-
-    response = llm.invoke([HumanMessage(content=prompt)])
-    # Try to safely parse the LLM output as a Python literal
-    try:
-        parsed = ast.literal_eval(response.content.strip())
-        if isinstance(parsed, list):
-            return sorted(str(x) for x in parsed)
-    except Exception:
-        pass
-
-    # Fallback: simple heuristic normalization if LLM output cannot be parsed
-    console.log("[bold yellow]LLM output could not be parsed. Falling back to simple normalization.[/bold yellow]")
-    normalized_map = {}
-    for f in features:
-        key = "".join(ch.lower() if ch.isalnum() or ch.isspace() else " " for ch in f).strip()
-        key = " ".join(key.split())  # collapse whitespace
-        # use title-case of key as a canonical readable form
-        canonical = key.title() if key else f
-        normalized_map[canonical] = normalized_map.get(canonical, []) + [f]
-
-    return sorted(normalized_map.keys())
-
-
-def extract_features_from_text(llm, doc_text: str, features: list[str]) -> dict[str, str]:
-    console.log("[bold blue]Extracting specified features from document text...[/bold blue]")
-    feature_dict = {}
-    for feature in features:
-        prompt = f"""
-            You are an expert in extracting specific information from documents. Your task is to extract the value of a given feature 
-            from the document. If the feature is not present, return 'N/A'. Ensure that your response is in JSON format, where the 
-            feature name is the key and the extracted value is the value. Do not include any additional text or explanations.
-
-            Example 1:
-            Feature: 'Revenue'
-            Document: 'The company reported a revenue of $5 million in the last quarter.'
-            Response: {{ "Revenue": "$5 million" }}
-
-            Example 2:
-            Feature: 'Climate Change'
-            Document: 'This research paper discusses the impact of climate change on marine biodiversity.'
-            Response: {{ "Climate Change": "Impact on marine biodiversity" }}
-
-            Example 3:
-            Feature: 'Parties Involved'
-            Document: 'This contract is between Company A and Company B for the supply of raw materials.'
-            Response: {{ "Parties Involved": "Company A, Company B" }}
-
-            Now, extract the following feature from the document. If not found, return 'N/A'.
-            Feature: {feature}
-            Document: {doc_text}
-        """
-        response = llm.invoke([HumanMessage(content=prompt)])
-        try:
-            extracted_data = eval(response.content)
-            if isinstance(extracted_data, dict) and feature in extracted_data:
-                feature_dict[feature] = extracted_data[feature]
-            else:
-                feature_dict[feature] = "N/A"
-        except Exception:
-            feature_dict[feature] = "N/A"
-    console.log("[bold green]Feature extraction completed successfully.[/bold green]")
-    return feature_dict
-
-
-# --- Main Pipeline ---
-def main():
-    """Main pipeline for processing PDFs and extracting features."""
-
-    # Step 1: Load environment variables
-    console.log("[bold blue]Loading environment variables...[/bold blue]")
     load_dotenv()
-    pplx_api_key = os.getenv("PPLX_API_KEY")
-    if not pplx_api_key:
-        console.log("[bold red]Error: PPLX_API_KEY environment variable not set.[/bold red]")
-        raise ValueError("PPLX_API_KEY environment variable not set.")
-    console.log("[bold green]Environment variables loaded successfully.[/bold green]")
 
-    # Step 2: Initialize the LLM
-    console.log("[bold blue]Initializing the LLM...[/bold blue]")
-    llm = ChatPerplexity(
-        model="sonar-pro",  # Replace with your desired Perplexity model.
-        temperature=0.3,  # Optional: Adjust the temperature for creativity
-        timeout=60,  # Set a timeout in seconds (adjust as needed)
+    model = OpenAIChatModel(
+        model_name="sonar",
+        provider=OpenAIProvider(base_url="https://api.perplexity.ai", api_key=os.getenv("PPLX_API_KEY", "")),
+        settings={"temperature": 0.1},
     )
-    console.log("[bold green]LLM initialized successfully.[/bold green]")
 
-    # Step 3: Read PDFs from the source directory
-    source_directory = "documents"  # Update with your directory path
-    pdf_texts = read_pdfs_with_llm(llm, source_directory)
+    agent = Agent(model, system_prompt=mp.SYSTEM_PROMPT)
+    return agent
 
-    # Step 4: Process each document to extract context and features
-    console.log("[bold blue]Processing documents to extract context and features...[/bold blue]")
-    doc_contexts = {}
-    doc_features = {}
-    all_features = set()
 
-    with Progress() as progress:
-        task = progress.add_task("[bold blue]Processing documents...", total=len(pdf_texts))
+def read_documents(file_path: Path) -> dict:
+    documents: dict = {}
 
-        for feature_name, text in pdf_texts.items():
-            # Step 1: Extract document context
-            progress.console.log("[bold blue]Step 1: Extracting document context...[/bold blue]")
-            doc_contexts[feature_name] = get_document_context(llm, text)
-            progress.console.clear()
+    if not file_path.exists():
+        console.log(f"[bold red] Source directory {file_path.resolve()} is mising.")
 
-            # Step 2: Extract important features based on context
-            progress.console.log("[bold blue]Step 2: Extracting important features based on context...[/bold blue]")
-            features = get_important_features(llm, text)
-            doc_features[feature_name] = features
-            all_features.update(features)
-            progress.console.clear()
+    files = sorted(file_path.glob("*.pdf"))
 
-            progress.advance(task)
+    for file in files:
+        file_contents = []
 
-    # Convert all_features to a sorted list for consistent ordering
+        for page in convert_from_path(file, dpi=300):
+            image_bytes = io.BytesIO()
+            page.save(image_bytes, format="PNG")
 
-    # Step _: Combine similar features
-    all_features = combine_similar_features(llm, all_features)
+            image = BinaryContent(image_bytes.getvalue(), media_type="image/png")
+            file_contents.append(image)
 
-    # Step 5: Extract feature values and build a DataFrame
-    console.log("[bold blue]Extracting feature values and building a DataFrame...[/bold blue]")
-    rows = []
-    with Progress() as progress:
-        task = progress.add_task("[bold blue]Extracting features...", total=len(pdf_texts))
-        for feature_name, text in pdf_texts.items():
-            feature_values = extract_features_from_text(llm, text, doc_features[feature_name])
-            row = {feature: feature_values.get(feature, "N/A") for feature in all_features}
-            row["filename"] = feature_name
-            rows.append(row)
-            progress.advance(task)
+        documents[file.name] = file_contents
 
-    df = pd.DataFrame(rows)
-    # Remove columns that are completely empty
-    df = df.dropna(axis="columns", how="all")
-
-    # Step 6: Save results to a CSV file
-    output_file = "extracted_features.csv"
-    output_path = os.path.join("artifacts", output_file)
-
-    df.to_csv(output_path, index=False)
-    console.log(f"[bold green]Feature extraction complete. Results saved to {output_file}[/bold green]")
+    return documents
 
 
 if __name__ == "__main__":
-    main()
+    console = Console()
+    agent = setup_agent()
+    test_files_path = Path.cwd() / "artifacts" / "test_docs"
+    documents = read_documents(test_files_path)
+
+    features = []
+    data = []
+    output_file_path = Path.cwd() / "artifacts" / "extracted_features.csv"
+
+    for i, (document, content) in enumerate(documents.items(), start=1):
+        console.log(f"[bold blue]Processing [bold green]{i}/{len(documents)} [{document}][bold green][/bold blue]")
+        console.log("[bold cyan]\tExtracting text from PDF...[/bold cyan]")
+        pdf_text = agent.run_sync([mp.EXTRACT_TEXT_FROM_PDF, *content])
+
+        # console.log("[bold cyan]\tExtracting document context...[/bold cyan]")
+        # document_context = agent.run_sync(f"{mp.IDENTIFY_DOCUMENT_CONTEXT}\n {pdf_text}")
+
+        console.log("[bold cyan]\tExtracting important features...[/bold cyan]")
+        important_features = agent.run_sync(f"{mp.INDENTIFY_IMPORTANT_FEATURES}\n {pdf_text}")
+
+        console.log("[bold cyan]\tCombining with existing features...[/bold cyan]")
+        combined_features = agent.run_sync(f"{mp.COMBINE_FEATURES}\n{features} \n{important_features} ")
+        features.extend(list(feature.strip() for feature in combined_features.output.split(",")))
+
+        console.log("[bold cyan]\tExtracting features from text...[/bold cyan]")
+        extracted_features = agent.run_sync(f"{mp.EXTRACT_FEATURES}\n FEATURE: {features} \nTEXT: {pdf_text} ")
+        extracted_features = json.loads(extracted_features.output.replace("```", "").replace("json", ""))
+        extracted_features["Source file"] = document
+
+        data.append(extracted_features)
+        console.clear()
+
+    df = pd.DataFrame(data)
+
+    df.replace("N/A", pd.NA)
+    df.dropna(axis="columns", how="all", inplace=True)
+
+    console.log(df)
+
+    # Save the features
+    df.to_csv(output_file_path, index=False)
+
+    console.log("[bold green] Successful! [/bold green]")
