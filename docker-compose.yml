@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  dataalchemy:
+    build: .
+    container_name: dataalchemy
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./artifacts/test_docs:/app/artifacts/test_docs
+    environment:
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+    restart: unless-stopped
