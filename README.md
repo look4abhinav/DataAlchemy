@@ -78,7 +78,6 @@ DataAlchemy/
 │   └── test_docs/          # Directory for PDF files (CLI mode)
 ├── prompts/
 │   └── model_prompts.py    # AI model prompts for document processing
-├── main.py                 # CLI application script
 ├── app.py                  # Streamlit web interface
 ├── pyproject.toml          # Project configuration and dependencies
 └── README.md              # Project documentation
